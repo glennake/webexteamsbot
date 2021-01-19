@@ -2,11 +2,12 @@
 
 """Main module."""
 
-from flask import Flask, request
+from flask import Flask, request, redirect
 from webexteamssdk import WebexTeamsAPI
 from webexteamsbot.models import Response
 import sys
 import json
+from O365 import Account, FileSystemTokenBackend
 
 # __author__ = "imapex"
 # __author_email__ = "CiscoTeamsBot@imapex.io"
@@ -28,8 +29,12 @@ class TeamsBot(Flask):
         webhook_resource_event=None,
         webhook_resource="messages",
         webhook_event="created",
-        approved_users=[], 
+        approved_users=[],
         debug=False,
+        o365_client_id=None,
+        o365_client_token=None,
+        o365_tenant_id="common",
+        o365_scopes=[],
     ):
         """
         Initialize a new TeamsBot
@@ -56,12 +61,7 @@ class TeamsBot(Flask):
         super(TeamsBot, self).__init__(teams_bot_name)
 
         # Verify required parameters provided
-        if None in (
-            teams_bot_name,
-            teams_bot_token,
-            teams_bot_email,
-            teams_bot_token,
-        ):
+        if None in (teams_bot_name, teams_bot_token, teams_bot_email, teams_bot_token,):
             raise ValueError(
                 "TeamsBot requires teams_bot_name, "
                 "teams_bot_token, teams_bot_email, teams_bot_url"
@@ -77,6 +77,12 @@ class TeamsBot(Flask):
         self.webhook_resource = webhook_resource
         self.webhook_event = webhook_event
         self.webhook_resource_event = webhook_resource_event
+        self.o365_client_id = o365_client_id
+        self.o365_client_token = o365_client_token
+        self.o365_tenant_id = o365_tenant_id
+        self.o365_scopes = o365_scopes
+        self.o365_auth_state = None
+        self.o365_state_tracker = {}
 
         # Create Teams API Object for interacting with Teams
         if teams_api_url:
@@ -99,17 +105,29 @@ class TeamsBot(Flask):
         }
 
         # Set default help message
-        self.help_message = "Hello!  I understand the following commands:  \n"
+        self.help_message = "Hello! I understand the following commands: \n"
 
         # Flask Application URLs
         # Basic Health Check for Flask Application
         self.add_url_rule("/health", "health", self.health)
         # Endpoint to enable dynamically configuring account
         self.add_url_rule("/config", "config", self.config_bot)
-        # Teams WebHook Target
+        # MS Auth step 1
         self.add_url_rule(
-            "/", "index", self.process_incoming_message, methods=["POST"]
+            "/msauth_step_one",
+            "msauth_step_one",
+            self.msauth_step_one,
+            methods=["GET", "POST"],
         )
+        # MS Auth step 2 callback
+        self.add_url_rule(
+            "/msauth_step_two_callback",
+            "msauth_step_two_callback",
+            self.msauth_step_two_callback,
+            methods=["GET", "POST"],
+        )
+        # Teams WebHook Target
+        self.add_url_rule("/", "index", self.process_incoming_message, methods=["POST"])
 
         # Setup the Teams WebHook and connections.
         self.teams_setup()
@@ -134,17 +152,18 @@ class TeamsBot(Flask):
         # Setup the Teams Connection
         globals()["teams"] = WebexTeamsAPI(access_token=self.teams_bot_token)
         globals()["webhook"] = self.setup_webhook(
-            self.teams_bot_name, self.teams_bot_url,
-            self.webhook_resource, self.webhook_event,
-            self.webhook_resource_event
+            self.teams_bot_name,
+            self.teams_bot_url,
+            self.webhook_resource,
+            self.webhook_event,
+            self.webhook_resource_event,
         )
         sys.stderr.write("Configuring Webhook. \n")
         for w in globals()["webhook"]:
             sys.stderr.write("Webhook ID: " + w.id + "\n")
 
     # noinspection PyMethodMayBeStatic
-    def setup_webhook(self, name, targeturl, wh_resource, wh_event,
-                      wh_resource_event):
+    def setup_webhook(self, name, targeturl, wh_resource, wh_event, wh_resource_event):
         """
         Setup Teams WebHook to send incoming messages to this bot.
         :param name: Name of the WebHook
@@ -198,8 +217,10 @@ class TeamsBot(Flask):
                 try:
                     wh = self.teams.webhooks.delete(webhookId=wh.id)
                     wh = self.teams.webhooks.create(
-                        name=searchname, targetUrl=targeturl,
-                        resource=w["resource"], event=w["event"]
+                        name=searchname,
+                        targetUrl=targeturl,
+                        resource=w["resource"],
+                        event=w["event"],
                     )
                 # https://github.com/CiscoDevNet/ciscoteamsapi/blob/master/ciscoteamsapi/api/webhooks.py#L237
                 except Exception as e:
@@ -313,9 +334,16 @@ class TeamsBot(Flask):
             sys.stderr.write("Message from: " + message.personEmail + "\n")
 
             # Check if user is approved
-            if len(self.approved_users) > 0 and message.personEmail not in self.approved_users:
+            if (
+                len(self.approved_users) > 0
+                and message.personEmail not in self.approved_users
+            ):
                 # User NOT approved
-                sys.stderr.write("User: " + message.personEmail + " is not approved to interact with bot. Ignoring.\n")
+                sys.stderr.write(
+                    "User: "
+                    + message.personEmail
+                    + " is not approved to interact with bot. Ignoring.\n"
+                )
                 return "Unapproved user"
 
             # Find the command that was sent, if any
@@ -371,8 +399,7 @@ class TeamsBot(Flask):
         :param callback: The function to run when this command is given
         :return:
         """
-        self.commands[command.lower()] = {"help": help_message,
-                                          "callback": callback}
+        self.commands[command.lower()] = {"help": help_message, "callback": callback}
 
     def remove_command(self, command):
         """
@@ -390,7 +417,7 @@ class TeamsBot(Flask):
         :return:
         """
         cmd_loc = text.find(command)
-        message = text[cmd_loc + len(command):]
+        message = text[cmd_loc + len(command) :]
         return message
 
     def set_greeting(self, callback):
@@ -399,9 +426,7 @@ class TeamsBot(Flask):
         :param callback: The function to run to create and return the greeting.
         :return:
         """
-        self.add_command(
-            command="/greeting", help_message="*", callback=callback
-        )
+        self.add_command(command="/greeting", help_message="*", callback=callback)
         self.default_action = "/greeting"
 
     def set_help_message(self, msg):
@@ -434,3 +459,76 @@ class TeamsBot(Flask):
         # Get sent message
         message = self.extract_message("/echo", post_data.text)
         return message
+
+    def msauth_step_one(self):
+
+        # Verify required parameters provided
+        if None in (
+            self.o365_client_id,
+            self.o365_client_token,
+            self.o365_tenant_id,
+            self.o365_scopes,
+        ):
+            raise ValueError(
+                "MS Auth requires o365_client_id, o365_client_token, o365_tenant_id, o365_scopes"
+            )
+
+        person_id = request.args["person_id"]
+
+        token_backend = FileSystemTokenBackend(
+            token_path="token_backend", token_filename=person_id
+        )
+
+        credentials = (
+            self.o365_client_id,
+            self.o365_client_token,
+        )
+
+        callback = self.teams_bot_url + "/msauth_step_two_callback"
+
+        account = Account(
+            credentials, token_backend=token_backend, tenant_id=self.o365_tenant_id
+        )
+
+        # account = Account(credentials, tenant_id=self.o365_tenant_id)
+
+        url, self.o365_auth_state = account.con.get_authorization_url(
+            requested_scopes=self.o365_scopes, redirect_uri=callback
+        )
+
+        self.o365_state_tracker[self.o365_auth_state] = person_id
+
+        return redirect(url)
+
+    def msauth_step_two_callback(self):
+
+        person_id = self.o365_state_tracker[self.o365_auth_state]
+
+        token_backend = FileSystemTokenBackend(
+            token_path="token_backend", token_filename=person_id
+        )
+
+        credentials = (
+            self.o365_client_id,
+            self.o365_client_token,
+        )
+
+        account = Account(
+            credentials, token_backend=token_backend, tenant_id=self.o365_tenant_id
+        )
+
+        # account = Account(credentials, tenant_id=self.o365_tenant_id)
+
+        callback = self.teams_bot_url + "/msauth_step_two_callback"
+
+        result = account.con.request_token(
+            request.url, state=self.o365_auth_state, redirect_uri=callback
+        )
+
+        self.o365_state_tracker.pop(self.o365_auth_state)
+
+        # if result is True, then authentication was succesful
+        #  and the auth token is stored in the token backend
+        if result:
+            return "Success!"
+        # else ....

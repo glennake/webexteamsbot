@@ -105,3 +105,7 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+# tokens
+o365_token.txt
+token_backend/*

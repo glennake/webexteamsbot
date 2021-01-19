@@ -15,6 +15,10 @@ bot_email = os.getenv("TEAMS_BOT_EMAIL")
 teams_token = os.getenv("TEAMS_BOT_TOKEN")
 bot_url = os.getenv("TEAMS_BOT_URL")
 bot_app_name = os.getenv("TEAMS_BOT_APP_NAME")
+o365_client_id = os.getenv("TEAMS_BOT_O365_CLIENT_ID")
+o365_client_token = os.getenv("TEAMS_BOT_O365_CLIENT_TOKEN")
+o365_tenant_id = os.getenv("TEAMS_BOT_O365_TENANT_ID")
+o365_scopes = os.getenv("TEAMS_BOT_O365_SCOPES")
 
 # Example: How to limit the approved Webex Teams accounts for interaction
 #          Also uncomment the parameter in the instantiation of the new bot
@@ -53,6 +57,10 @@ bot = TeamsBot(
         {"resource": "messages", "event": "created"},
         {"resource": "attachmentActions", "event": "created"},
     ],
+    o365_client_id=o365_client_id,
+    o365_client_token=o365_client_token,
+    o365_tenant_id=o365_tenant_id,
+    o365_scopes=o365_scopes,
 )
 
 
@@ -252,4 +260,5 @@ bot.remove_command("/echo")
 
 if __name__ == "__main__":
     # Run Bot
-    bot.run(host="0.0.0.0", port=5000)
+    bot.run(host="0.0.0.0", port=5000, ssl_context="adhoc")
+
