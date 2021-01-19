@@ -29,6 +29,7 @@ class TeamsBot(Flask):
         webhook_resource_event=None,
         webhook_resource="messages",
         webhook_event="created",
+        admin_users=[],
         approved_users=[],
         debug=False,
         o365_client_id=None,
@@ -54,6 +55,7 @@ class TeamsBot(Flask):
                 to create webhooks for.
                 [{"resource": "messages", "event": "created"},
                 {"resource": "attachmentActions", "event": "created"}]
+        :param admin_users: List of admin users (by email) to interact with admin functions of the bot.
         :param approved_users: List of approved users (by email) to interact with bot. Default all users.
         :param debug: boolean value for debut messages
         """
@@ -73,7 +75,9 @@ class TeamsBot(Flask):
         self.teams_bot_email = teams_bot_email
         self.teams_bot_url = teams_bot_url
         self.default_action = default_action
-        self.approved_users = approved_users
+        self.admin_users = admin_users
+        admins_missing_from_approved = set(admin_users) - set(approved_users)
+        self.approved_users = approved_users + list(admins_missing_from_approved)
         self.webhook_resource = webhook_resource
         self.webhook_event = webhook_event
         self.webhook_resource_event = webhook_resource_event
@@ -104,8 +108,18 @@ class TeamsBot(Flask):
             "/help": {"help": "Get help.", "callback": self.send_help},
         }
 
+        # A dictionary of admin commands this bot listens to
+        # Each key in the dictionary is a command, with associated help
+        # text and callback function
+        self.admin_commands = {
+            "/admin": {"admin": "Admin help.", "callback": self.send_admin_commands,}
+        }
+
         # Set default help message
         self.help_message = "Hello! I understand the following commands: \n"
+
+        # Set admin help message
+        self.admin_message = "Hello! I understand the following admin commands: \n"
 
         # Flask Application URLs
         # Basic Health Check for Flask Application
@@ -348,11 +362,18 @@ class TeamsBot(Flask):
 
             # Find the command that was sent, if any
             command = ""
+
             for c in sorted(self.commands.items()):
                 if message.text.lower().find(c[0]) != -1:
                     command = c[0]
                     sys.stderr.write("Found command: " + command + "\n")
                     # If a command was found, stop looking for others
+                    break
+
+            for c in sorted(self.admin_commands.items()):
+                if message.text.lower().find(c[0]) != -1:
+                    command = c[0]
+                    sys.stderr.write("Found admin command: " + command + "\n")
                     break
 
             # Build the reply to the user
@@ -366,6 +387,12 @@ class TeamsBot(Flask):
             elif command in self.commands.keys():
                 # noinspection PyCallingNonCallable
                 reply = self.commands[command]["callback"](message)
+            elif (
+                command in self.admin_commands.keys()
+                and len(self.admin_users) > 0
+                and message.personEmail in self.admin_users
+            ):
+                reply = self.admin_commands[command]["callback"](message)
             else:
                 pass
 
@@ -390,6 +417,19 @@ class TeamsBot(Flask):
         elif reply:
             self.teams.messages.create(roomId=room_id, markdown=reply)
         return reply
+
+    def add_admin_command(self, command, help_message, callback):
+        """
+        Add a new admin command to the bot
+        :param command: The command string, example "/admin"
+        :param help_message: A Help string for this command
+        :param callback: The function to run when this command is given
+        :return:
+        """
+        self.admin_commands[command.lower()] = {
+            "help": help_message,
+            "callback": callback,
+        }
 
     def add_command(self, command, help_message, callback):
         """
@@ -458,6 +498,19 @@ class TeamsBot(Flask):
         """
         # Get sent message
         message = self.extract_message("/echo", post_data.text)
+        return message
+
+    def send_admin(self, post_data):
+        """
+        Construct a admin message for admin users.
+        :param post_data:
+        :return:
+        """
+        message = self.admin_message
+        for c in sorted(self.admin_commands.items()):
+            print(c)
+            if c[1]["admin"][0] != "*":
+                message += "* **%s**: %s \n" % (c[0], c[1]["admin"])
         return message
 
     def msauth_step_one(self):

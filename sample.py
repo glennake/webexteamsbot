@@ -20,6 +20,13 @@ o365_client_token = os.getenv("TEAMS_BOT_O365_CLIENT_TOKEN")
 o365_tenant_id = os.getenv("TEAMS_BOT_O365_TENANT_ID")
 o365_scopes = os.getenv("TEAMS_BOT_O365_SCOPES")
 
+# Example: How to limit the approved Webex Teams accounts for admin functions
+#          Also uncomment the parameter in the instantiation of the new bot
+# List of email accounts of users allowed to access bot admin functions
+# admin_users = [
+#     "josmith@demo.local",
+# ]
+
 # Example: How to limit the approved Webex Teams accounts for interaction
 #          Also uncomment the parameter in the instantiation of the new bot
 # List of email accounts of approved users to talk with the bot
@@ -45,6 +52,7 @@ if not bot_email or not teams_token or not bot_url or not bot_app_name:
 
 # Create a Bot Object
 #   Note: debug mode prints out more details about processing to terminal
+#   Note: the `admin_users=admin_users` line commented out and shown as reference
 #   Note: the `approved_users=approved_users` line commented out and shown as reference
 bot = TeamsBot(
     bot_app_name,
@@ -52,6 +60,7 @@ bot = TeamsBot(
     teams_bot_url=bot_url,
     teams_bot_email=bot_email,
     debug=True,
+    # admin_users=admin_users,
     # approved_users=approved_users,
     webhook_resource_event=[
         {"resource": "messages", "event": "created"},
@@ -238,6 +247,48 @@ def current_time(incoming_msg):
     return reply
 
 
+def approve_user(self, incoming_msg):
+    """
+    Command to add user email address to approved_users list
+    :param incoming_msg: The incoming message object from Teams
+    :return: A text based reply
+    """
+
+    # Extract the message content, without the command "/approve_user"
+    msg = bot.extract_message("/approve_user", incoming_msg.text).strip().split()
+
+    if len(msg) >= 1:
+        user_email = msg[0]
+        if "@" in user_email:
+            self.approved_users.append(user_email)
+            return "User {} added to approved users list.".format(user_email)
+        else:
+            return "User email address is required."
+    else:
+        return "No user provided."
+
+
+def remove_user(self, incoming_msg):
+    """
+    Command to remove user email address from approved_users list
+    :param incoming_msg: The incoming message object from Teams
+    :return: A text based reply
+    """
+
+    # Extract the message content, without the command "/remove_user"
+    msg = bot.extract_message("/remove_user", incoming_msg.text).strip().split()
+
+    if len(msg) >= 1:
+        user_email = msg[0]
+        if user_email in self.approved_users:
+            self.approved_users.remove(user_email)
+            return "User {} removed from approved users list.".format(user_email)
+        else:
+            return "User not found in approved users list."
+    else:
+        return "No user provided."
+
+
 # Create help message for current_time command
 current_time_help = "Look up the current time for a given timezone. "
 current_time_help += "_Example: **/time EST**_"
@@ -253,6 +304,16 @@ bot.add_command(
     "/demo", "Sample that creates a Teams message to be returned.", ret_message
 )
 bot.add_command("/time", current_time_help, current_time)
+
+# Add new admin commands to the bot.
+bot.add_admin_command(
+    "/approve_user", "Add user email address to bot approved users list", approve_user
+)
+bot.add_admin_command(
+    "/remove_user",
+    "Remove user email address from bot approved users list",
+    remove_user,
+)
 
 # Every bot includes a default "/echo" command.  You can remove it, or any
 # other command with the remove_command(command) method.
