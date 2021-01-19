@@ -61,7 +61,7 @@ class TeamsBot(Flask):
         super(TeamsBot, self).__init__(teams_bot_name)
 
         # Verify required parameters provided
-        if None in (teams_bot_name, teams_bot_token, teams_bot_email, teams_bot_token,):
+        if None in (teams_bot_name, teams_bot_token, teams_bot_email, teams_bot_url,):
             raise ValueError(
                 "TeamsBot requires teams_bot_name, "
                 "teams_bot_token, teams_bot_email, teams_bot_url"
